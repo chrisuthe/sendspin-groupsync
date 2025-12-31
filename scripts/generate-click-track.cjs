@@ -11,7 +11,8 @@ const config = {
   totalDuration: 20,
   clickDuration: 5, // ms
   clickInterval: 1000, // ms
-  frequencies: [1000, 2000, 4000, 8000],
+  // Frequencies optimized for smartphone mic sensitivity
+  frequencies: [500, 1000, 2000, 3000],
   amplitude: 0.8,
 };
 

@@ -45,6 +45,7 @@ export interface CalibrationConfig {
 export const DEFAULT_CALIBRATION_CONFIG: CalibrationConfig = {
   clickIntervalMs: 1000,
   totalClicks: 20,
-  frequencies: [1000, 2000, 4000, 8000],
+  // Frequencies optimized for smartphone mic sensitivity (sweet spots: 500, 1k, 2k, 3k Hz)
+  frequencies: [500, 1000, 2000, 3000],
   sampleRate: 48000,
 };

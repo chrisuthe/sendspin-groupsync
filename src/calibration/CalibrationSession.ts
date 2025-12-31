@@ -237,19 +237,49 @@ export class CalibrationSession {
   private matchDetections(): Array<{ expectedTime: number; detectedTime: number }> {
     const matched: Array<{ expectedTime: number; detectedTime: number }> = [];
     const usedExpected = new Set<number>();
+    const frequencyTolerance = 150; // Hz tolerance for matching
+
+    // First pass: estimate the overall offset from the first few detections
+    // This handles the case where MA playback starts with some delay
+    let estimatedOffset = 0;
+    if (this.detections.length > 0) {
+      // Find first detection that matches a frequency
+      for (const detection of this.detections.slice(0, 5)) {
+        for (const expected of this.expectedClicks) {
+          if (Math.abs(detection.frequency - expected.frequency) <= frequencyTolerance) {
+            // This detection likely corresponds to this expected click
+            estimatedOffset = detection.timestamp - expected.time;
+            console.log(`[CalibrationSession] Estimated playback offset: ${estimatedOffset.toFixed(0)}ms`);
+            break;
+          }
+        }
+        if (estimatedOffset !== 0) break;
+      }
+    }
 
     for (const detection of this.detections) {
-      // Find the closest expected click that hasn't been matched
+      // Find the closest expected click that:
+      // 1. Hasn't been matched yet
+      // 2. Has matching frequency
+      // 3. Is within reasonable time range (accounting for estimated offset)
       let bestMatch: { index: number; diff: number } | null = null;
 
       for (let i = 0; i < this.expectedClicks.length; i++) {
         if (usedExpected.has(i)) continue;
 
         const expected = this.expectedClicks[i];
-        const diff = Math.abs(detection.timestamp - expected.time);
 
-        // Only match if within reasonable range (±500ms)
-        if (diff < 500 && (!bestMatch || diff < bestMatch.diff)) {
+        // Check frequency match first
+        if (Math.abs(detection.frequency - expected.frequency) > frequencyTolerance) {
+          continue;
+        }
+
+        // Calculate time difference, accounting for estimated playback offset
+        const adjustedExpectedTime = expected.time + estimatedOffset;
+        const diff = Math.abs(detection.timestamp - adjustedExpectedTime);
+
+        // Only match if within reasonable range (±300ms after offset adjustment)
+        if (diff < 300 && (!bestMatch || diff < bestMatch.diff)) {
           bestMatch = { index: i, diff };
         }
       }
@@ -260,9 +290,13 @@ export class CalibrationSession {
           expectedTime: this.expectedClicks[bestMatch.index].time,
           detectedTime: detection.timestamp,
         });
+        console.log(`[CalibrationSession] Matched detection at ${detection.timestamp.toFixed(0)}ms (${detection.frequency}Hz) to expected click #${bestMatch.index + 1} at ${this.expectedClicks[bestMatch.index].time}ms`);
+      } else {
+        console.log(`[CalibrationSession] No match for detection at ${detection.timestamp.toFixed(0)}ms (${detection.frequency}Hz)`);
       }
     }
 
+    console.log(`[CalibrationSession] Matched ${matched.length} of ${this.detections.length} detections`);
     return matched;
   }
 

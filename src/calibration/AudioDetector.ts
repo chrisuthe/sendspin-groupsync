@@ -20,7 +20,10 @@ export const DEFAULT_AUDIO_DETECTOR_CONFIG: AudioDetectorConfig = {
   onsetThreshold: 0.01,         // Lowered for better sensitivity
   frequencyTolerance: 100,      // Wider tolerance for frequency matching
   minClickGap: 500,
-  expectedFrequencies: [1000, 2000, 4000, 8000],
+  // Frequencies optimized for smartphone mic sensitivity
+  // Sweet spots: 220, 500, 1000, 2500, 3500 Hz
+  // Avoid 4k+ where mics and speakers both struggle
+  expectedFrequencies: [500, 1000, 2000, 3000],
 };
 
 type DetectionCallback = (detection: ClickDetection) => void;
