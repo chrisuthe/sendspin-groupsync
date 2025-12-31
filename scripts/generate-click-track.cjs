@@ -9,7 +9,7 @@ const path = require('path');
 const config = {
   sampleRate: 48000,
   totalDuration: 20,
-  clickDuration: 5, // ms
+  clickDuration: 50, // ms - longer for reliable detection (was 5ms)
   clickInterval: 1000, // ms
   // Frequencies optimized for smartphone mic sensitivity
   frequencies: [500, 1000, 2000, 3000],

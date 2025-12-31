@@ -15,9 +15,9 @@ export interface ClickTrackConfig {
 export const DEFAULT_CLICK_TRACK_CONFIG: ClickTrackConfig = {
   sampleRate: 48000,
   totalDuration: 20,
-  clickDuration: 5,
+  clickDuration: 50,  // 50ms for reliable detection (was 5ms - too short!)
   clickInterval: 1000,
-  frequencies: [1000, 2000, 4000, 8000], // Rotating octaves
+  frequencies: [500, 1000, 2000, 3000], // Optimized for smartphone mics
   amplitude: 0.8,
 };
 
