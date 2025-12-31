@@ -1,14 +1,62 @@
 import { useState } from 'react';
-import { useConnectionStore } from '../store';
+import { useConnectionStore, usePlayersStore } from '../store';
+import { maClient } from '../ma-client';
 
 export function ConnectionPanel() {
-  const { serverUrl, setServerUrl, connecting, error, recentServers } = useConnectionStore();
+  const {
+    serverUrl,
+    setServerUrl,
+    connecting,
+    setConnecting,
+    setConnected,
+    setError,
+    error,
+    recentServers,
+    addRecentServer,
+  } = useConnectionStore();
+  const { setPlayers, setLoading } = usePlayersStore();
   const [inputUrl, setInputUrl] = useState(serverUrl || '');
 
-  const handleConnect = () => {
-    // TODO: Implement actual connection logic
-    setServerUrl(inputUrl);
-    console.log('Connecting to:', inputUrl);
+  const handleConnect = async () => {
+    if (!inputUrl.trim()) return;
+
+    setConnecting(true);
+    setError(null);
+
+    try {
+      // Connect to Music Assistant
+      await maClient.connect(inputUrl.trim());
+
+      // Save URL and mark connected
+      setServerUrl(inputUrl.trim());
+      addRecentServer(inputUrl.trim());
+      setConnected(true);
+
+      // Fetch players
+      setLoading(true);
+      try {
+        const players = await maClient.getAllPlayers();
+        // Filter to only Sendspin-capable players
+        const sendspinPlayers = players.filter(
+          (p) => p.type?.includes('sendspin') || p.can_sync_with?.length
+        );
+        setPlayers(sendspinPlayers.length > 0 ? sendspinPlayers : players);
+        console.log('[MA] Found players:', players.length);
+      } catch (playerError) {
+        console.error('[MA] Failed to fetch players:', playerError);
+        // Still connected, just couldn't get players yet
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Connection failed';
+      setError(message);
+      console.error('[MA] Connection error:', err);
+    }
+  };
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && inputUrl.trim() && !connecting) {
+      handleConnect();
+    }
   };
 
   return (
@@ -30,10 +78,12 @@ export function ConnectionPanel() {
             type="text"
             value={inputUrl}
             onChange={(e) => setInputUrl(e.target.value)}
+            onKeyPress={handleKeyPress}
             placeholder="192.168.1.100:8095"
+            disabled={connecting}
             className="w-full px-4 py-3 bg-surface border border-gray-600 rounded-lg
                        focus:ring-2 focus:ring-primary focus:border-transparent
-                       placeholder-gray-500"
+                       placeholder-gray-500 disabled:opacity-50"
           />
         </div>
 
@@ -45,11 +95,18 @@ export function ConnectionPanel() {
 
         <button
           onClick={handleConnect}
-          disabled={connecting || !inputUrl}
+          disabled={connecting || !inputUrl.trim()}
           className="w-full py-3 px-4 bg-primary hover:bg-primary-dark disabled:opacity-50
-                     rounded-lg font-medium transition-colors"
+                     rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
         >
-          {connecting ? 'Connecting...' : 'Connect'}
+          {connecting ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              Connecting...
+            </>
+          ) : (
+            'Connect'
+          )}
         </button>
       </div>
 
@@ -61,8 +118,9 @@ export function ConnectionPanel() {
               <button
                 key={url}
                 onClick={() => setInputUrl(url)}
+                disabled={connecting}
                 className="w-full text-left px-4 py-2 bg-surface hover:bg-gray-700
-                           rounded-lg text-sm transition-colors"
+                           rounded-lg text-sm transition-colors disabled:opacity-50"
               >
                 {url}
               </button>
@@ -70,6 +128,12 @@ export function ConnectionPanel() {
           </div>
         </div>
       )}
+
+      <div className="text-center text-xs text-text-muted">
+        <p>
+          Make sure Music Assistant is running and accessible on your network.
+        </p>
+      </div>
     </div>
   );
 }

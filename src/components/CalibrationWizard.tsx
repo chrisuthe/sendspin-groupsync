@@ -1,36 +1,162 @@
+import { useEffect, useRef, useState } from 'react';
 import { useCalibrationStore, usePlayersStore } from '../store';
+import { createCalibrationSession, CalibrationSession } from '../calibration';
+import { pushSyncOffsets } from '../sync-push';
+import type { PushResult } from '../sync-push';
+import type { CalibrationResult } from '../types';
 
 export function CalibrationWizard() {
-  const { phase, setPhase, setCurrentPlayer, detectedClicks, results, updateOffset } = useCalibrationStore();
+  const {
+    phase,
+    setPhase,
+    setCurrentPlayer,
+    detectedClicks,
+    addClickDetection,
+    clearDetections,
+    results,
+    setResult,
+    updateOffset,
+    setError,
+  } = useCalibrationStore();
   const { players, selectedPlayerIds } = usePlayersStore();
+
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [calibrationProgress, setCalibrationProgress] = useState({ detected: 0, total: 20 });
+  const [isPushing, setIsPushing] = useState(false);
+  const [pushResults, setPushResults] = useState<PushResult[] | null>(null);
+  const sessionRef = useRef<CalibrationSession | null>(null);
+  const animationRef = useRef<number>(0);
 
   // Mock players for development
   const mockPlayers = players.length > 0 ? players : [
-    { player_id: 'player1', name: 'Living Room Speaker', available: true, type: 'sendspin' },
-    { player_id: 'player2', name: 'Kitchen Sendspin', available: true, type: 'sendspin' },
-    { player_id: 'player3', name: 'Bedroom SpinDroid', available: false, type: 'sendspin' },
+    { player_id: 'player1', name: 'Living Room Speaker', available: true, type: 'sendspin', powered: true, volume_level: 50, muted: false },
+    { player_id: 'player2', name: 'Kitchen Sendspin', available: true, type: 'sendspin', powered: true, volume_level: 50, muted: false },
+    { player_id: 'player3', name: 'Bedroom SpinDroid', available: false, type: 'sendspin', powered: false, volume_level: 50, muted: false },
   ];
 
   const selectedPlayers = mockPlayers.filter((p) =>
     selectedPlayerIds.includes(p.player_id)
   );
 
-  const handleSelectSpeaker = (playerId: string) => {
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      sessionRef.current?.stop();
+      cancelAnimationFrame(animationRef.current);
+    };
+  }, []);
+
+  // Audio level visualization loop
+  useEffect(() => {
+    if (phase !== 'listening') return;
+
+    const updateLevel = () => {
+      if (sessionRef.current) {
+        setAudioLevel(sessionRef.current.getCurrentLevel());
+      }
+      animationRef.current = requestAnimationFrame(updateLevel);
+    };
+
+    animationRef.current = requestAnimationFrame(updateLevel);
+
+    return () => {
+      cancelAnimationFrame(animationRef.current);
+    };
+  }, [phase]);
+
+  const handleSelectSpeaker = async (playerId: string) => {
+    const player = mockPlayers.find((p) => p.player_id === playerId);
+    if (!player) return;
+
     setCurrentPlayer(playerId);
+    clearDetections();
     setPhase('listening');
-    // TODO: Start audio detection
+
+    // Create and start calibration session
+    const session = createCalibrationSession(playerId, player.name);
+    sessionRef.current = session;
+
+    try {
+      await session.start((event) => {
+        switch (event.type) {
+          case 'click_detected':
+            addClickDetection(event.data as Parameters<typeof addClickDetection>[0]);
+            break;
+
+          case 'progress':
+            setCalibrationProgress(event.data as { detected: number; total: number });
+            break;
+
+          case 'completed':
+            const result = event.data as CalibrationResult;
+            setResult(playerId, result);
+            setPhase('results');
+            break;
+
+          case 'error':
+            setError(event.data as string);
+            setPhase('instructions');
+            break;
+        }
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Calibration failed');
+      setPhase('instructions');
+    }
+  };
+
+  const handleCancelCalibration = () => {
+    sessionRef.current?.stop();
+    sessionRef.current = null;
+    clearDetections();
+    setPhase('instructions');
+    setCurrentPlayer(null);
   };
 
   const handleBack = () => {
     if (phase === 'instructions') {
       setPhase('selecting');
     } else if (phase === 'listening') {
-      setPhase('instructions');
-      setCurrentPlayer(null);
+      handleCancelCalibration();
     } else if (phase === 'results') {
       setPhase('idle');
     }
   };
+
+  const handleApplyOffsets = async () => {
+    if (Object.keys(results).length === 0) return;
+
+    setIsPushing(true);
+    setPushResults(null);
+    setError(null);
+
+    try {
+      console.log('[CalibrationWizard] Applying offsets:', results);
+      const pushResultsArray = await pushSyncOffsets(results);
+      setPushResults(pushResultsArray);
+
+      // Check if all succeeded
+      const allSuccess = pushResultsArray.every((r) => r.success);
+      if (allSuccess) {
+        console.log('[CalibrationWizard] All offsets applied successfully');
+      } else {
+        const failed = pushResultsArray.filter((r) => !r.success);
+        console.warn('[CalibrationWizard] Some offsets failed:', failed);
+      }
+    } catch (err) {
+      console.error('[CalibrationWizard] Failed to apply offsets:', err);
+      setError(err instanceof Error ? err.message : 'Failed to apply offsets');
+    } finally {
+      setIsPushing(false);
+    }
+  };
+
+  // Generate waveform bars based on audio level
+  const waveformBars = Array.from({ length: 32 }, (_, i) => {
+    const baseHeight = 20 + Math.sin(i * 0.3 + Date.now() / 100) * 15;
+    const levelBoost = audioLevel * 100;
+    return Math.min(100, baseHeight + levelBoost);
+  });
 
   return (
     <div className="space-y-6 pb-20">
@@ -44,6 +170,15 @@ export function CalibrationWizard() {
               Hold your phone near each speaker, one at a time. A click track will play
               through all speakers while we measure the audio delay.
             </p>
+          </div>
+
+          <div className="p-4 bg-blue-900/20 border border-blue-700/50 rounded-lg text-blue-300 text-sm">
+            <p className="font-medium mb-1">Important</p>
+            <ul className="list-disc list-inside text-blue-300/70 space-y-1">
+              <li>Hold your phone 1-2 feet from the speaker</li>
+              <li>Keep the room quiet during calibration</li>
+              <li>The process takes about 20 seconds per speaker</li>
+            </ul>
           </div>
 
           <div className="space-y-3">
@@ -71,6 +206,16 @@ export function CalibrationWizard() {
             ))}
           </div>
 
+          {Object.keys(results).length > 0 && (
+            <button
+              onClick={() => setPhase('results')}
+              className="w-full py-3 px-4 bg-secondary hover:bg-secondary/80
+                         rounded-lg font-medium transition-colors"
+            >
+              View Results ({Object.keys(results).length} calibrated)
+            </button>
+          )}
+
           <button
             onClick={handleBack}
             className="w-full py-3 px-4 bg-surface hover:bg-gray-700
@@ -92,17 +237,14 @@ export function CalibrationWizard() {
             </p>
           </div>
 
-          {/* Waveform placeholder */}
-          <div className="h-32 bg-surface rounded-lg flex items-center justify-center">
-            <div className="flex gap-1 items-end h-16">
-              {[...Array(20)].map((_, i) => (
+          {/* Waveform visualization */}
+          <div className="h-32 bg-surface rounded-lg flex items-center justify-center overflow-hidden">
+            <div className="flex gap-1 items-center h-full px-4">
+              {waveformBars.map((height, i) => (
                 <div
                   key={i}
-                  className="w-2 bg-primary rounded-full animate-pulse"
-                  style={{
-                    height: `${Math.random() * 100}%`,
-                    animationDelay: `${i * 50}ms`,
-                  }}
+                  className="w-2 bg-primary rounded-full transition-all duration-75"
+                  style={{ height: `${height}%` }}
                 />
               ))}
             </div>
@@ -110,22 +252,39 @@ export function CalibrationWizard() {
 
           {/* Click detection indicators */}
           <div className="flex flex-wrap gap-2 justify-center">
-            {[...Array(20)].map((_, i) => (
+            {Array.from({ length: 20 }).map((_, i) => (
               <div
                 key={i}
-                className={`w-4 h-4 rounded-full ${
+                className={`w-4 h-4 rounded-full transition-colors ${
                   i < detectedClicks.length ? 'bg-secondary' : 'bg-gray-600'
                 }`}
               />
             ))}
           </div>
 
-          <p className="text-center text-text-muted">
-            Detected {detectedClicks.length} of 20 clicks
-          </p>
+          <div className="text-center">
+            <p className="text-lg font-medium">
+              {calibrationProgress.detected} of {calibrationProgress.total} clicks detected
+            </p>
+            <p className="text-text-muted text-sm mt-1">
+              {calibrationProgress.detected === 0
+                ? 'Waiting for audio...'
+                : calibrationProgress.detected < 10
+                ? 'Keep holding steady...'
+                : 'Almost done!'}
+            </p>
+          </div>
+
+          {/* Progress bar */}
+          <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-primary transition-all duration-300"
+              style={{ width: `${(calibrationProgress.detected / calibrationProgress.total) * 100}%` }}
+            />
+          </div>
 
           <button
-            onClick={handleBack}
+            onClick={handleCancelCalibration}
             className="w-full py-3 px-4 bg-surface hover:bg-gray-700
                        rounded-lg font-medium transition-colors"
           >
@@ -145,52 +304,115 @@ export function CalibrationWizard() {
             </p>
           </div>
 
-          <div className="space-y-4">
-            {Object.entries(results).map(([playerId, result]) => (
-              <div key={playerId} className="p-4 bg-surface rounded-lg">
-                <div className="flex justify-between mb-2">
-                  <span className="font-medium">{result.playerName}</span>
-                  <span className="text-secondary">{result.offsetMs.toFixed(1)} ms</span>
+          {Object.keys(results).length === 0 ? (
+            <div className="p-4 bg-yellow-900/20 border border-yellow-700/50 rounded-lg text-yellow-300 text-sm text-center">
+              No calibration results yet. Go back and calibrate some speakers.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {Object.entries(results).map(([playerId, result]) => (
+                <div key={playerId} className="p-4 bg-surface rounded-lg">
+                  <div className="flex justify-between mb-2">
+                    <span className="font-medium">{result.playerName}</span>
+                    <span className={`font-mono ${
+                      result.offsetMs > 0 ? 'text-blue-400' : result.offsetMs < 0 ? 'text-orange-400' : 'text-secondary'
+                    }`}>
+                      {result.offsetMs > 0 ? '+' : ''}{result.offsetMs.toFixed(1)} ms
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="-100"
+                    max="100"
+                    step="0.5"
+                    value={result.offsetMs}
+                    onChange={(e) => {
+                      updateOffset(playerId, parseFloat(e.target.value));
+                    }}
+                    className="w-full accent-primary"
+                  />
+                  <div className="flex justify-between text-xs text-text-muted mt-1">
+                    <span>-100ms (earlier)</span>
+                    <span>0</span>
+                    <span>+100ms (later)</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-text-muted mt-2">
+                    <span>Confidence: {Math.round(result.confidence * 100)}%</span>
+                    <span>{result.detectedClicks}/{result.totalClicks} clicks</span>
+                  </div>
                 </div>
-                <input
-                  type="range"
-                  min="-100"
-                  max="100"
-                  step="0.5"
-                  value={result.offsetMs}
-                  onChange={(e) => {
-                    updateOffset(playerId, parseFloat(e.target.value));
-                  }}
-                  className="w-full"
-                />
-                <div className="flex justify-between text-xs text-text-muted">
-                  <span>-100ms</span>
-                  <span>0</span>
-                  <span>+100ms</span>
+              ))}
+            </div>
+          )}
+
+          {/* Push Results */}
+          {pushResults && (
+            <div className="space-y-2">
+              <h3 className="font-medium text-sm text-text-muted">Push Results</h3>
+              {pushResults.map((result) => (
+                <div
+                  key={result.playerId}
+                  className={`p-3 rounded-lg text-sm flex items-center gap-2 ${
+                    result.success
+                      ? 'bg-green-900/20 border border-green-700/50 text-green-300'
+                      : 'bg-red-900/20 border border-red-700/50 text-red-300'
+                  }`}
+                >
+                  <span>{result.success ? '✓' : '✗'}</span>
+                  <span className="flex-1">{result.playerName}</span>
+                  {result.success ? (
+                    <span className="text-xs opacity-75">via {result.method}</span>
+                  ) : (
+                    <span className="text-xs opacity-75">{result.error}</span>
+                  )}
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
 
           <div className="flex gap-3">
             <button
-              onClick={() => setPhase('instructions')}
-              className="flex-1 py-3 px-4 bg-surface hover:bg-gray-700
+              onClick={() => {
+                setPhase('instructions');
+                setPushResults(null);
+              }}
+              disabled={isPushing}
+              className="flex-1 py-3 px-4 bg-surface hover:bg-gray-700 disabled:opacity-50
                          rounded-lg font-medium transition-colors"
             >
-              Re-test
+              Calibrate More
             </button>
             <button
-              onClick={() => {
-                // TODO: Apply offsets
-                setPhase('idle');
-              }}
-              className="flex-1 py-3 px-4 bg-primary hover:bg-primary-dark
-                         rounded-lg font-medium transition-colors"
+              onClick={handleApplyOffsets}
+              disabled={Object.keys(results).length === 0 || isPushing}
+              className="flex-1 py-3 px-4 bg-primary hover:bg-primary-dark disabled:opacity-50
+                         rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
             >
-              Apply Offsets
+              {isPushing ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Applying...
+                </>
+              ) : pushResults?.every((r) => r.success) ? (
+                'Done!'
+              ) : (
+                'Apply Offsets'
+              )}
             </button>
           </div>
+
+          {pushResults?.every((r) => r.success) && (
+            <button
+              onClick={() => {
+                setPhase('idle');
+                setPushResults(null);
+              }}
+              className="w-full py-3 px-4 bg-secondary hover:bg-secondary/80
+                         rounded-lg font-medium transition-colors"
+            >
+              Finish
+            </button>
+          )}
         </>
       )}
     </div>
