@@ -17,8 +17,8 @@ export interface AudioDetectorConfig {
 export const DEFAULT_AUDIO_DETECTOR_CONFIG: AudioDetectorConfig = {
   sampleRate: 48000,
   fftSize: 2048,
-  onsetThreshold: 0.05,
-  frequencyTolerance: 50,
+  onsetThreshold: 0.01,         // Lowered for better sensitivity
+  frequencyTolerance: 100,      // Wider tolerance for frequency matching
   minClickGap: 500,
   expectedFrequencies: [1000, 2000, 4000, 8000],
 };
@@ -185,6 +185,8 @@ export class AudioDetector {
     }, 500);
   }
 
+  private debugLogCounter = 0;
+
   private processAudioChunk(samples: Float32Array): void {
     // Add to ring buffer
     for (let i = 0; i < samples.length; i++) {
@@ -198,6 +200,13 @@ export class AudioDetector {
     // Check for onset (energy significantly above noise floor)
     const threshold = Math.max(this.config.onsetThreshold, this.noiseFloor * 3);
 
+    // Debug logging every ~1 second (48000 samples / 2048 buffer = ~23 chunks/sec)
+    this.debugLogCounter++;
+    if (this.debugLogCounter % 23 === 0) {
+      const frequency = this.detectDominantFrequency();
+      console.log(`[AudioDetector] Level: ${rms.toFixed(4)}, threshold: ${threshold.toFixed(4)}, freq: ${frequency?.toFixed(0) ?? 'none'}Hz`);
+    }
+
     if (rms > threshold) {
       const now = performance.now();
       const elapsed = now - this.startTime;
@@ -209,6 +218,8 @@ export class AudioDetector {
 
       // Verify frequency
       const frequency = this.detectDominantFrequency();
+      console.log(`[AudioDetector] Onset detected! RMS: ${rms.toFixed(4)}, freq: ${frequency?.toFixed(0)}Hz, expected: ${this.config.expectedFrequencies}`);
+
       if (frequency && this.isExpectedFrequency(frequency)) {
         this.lastDetectionTime = elapsed;
 
@@ -221,6 +232,8 @@ export class AudioDetector {
 
         console.log('[AudioDetector] Click detected:', detection);
         this.detectionCallback?.(detection);
+      } else {
+        console.log(`[AudioDetector] Frequency ${frequency?.toFixed(0)}Hz not in expected list, ignoring`);
       }
     }
   }

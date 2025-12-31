@@ -18,13 +18,6 @@ export function PlayerList() {
     resetPlayers();
   };
 
-  // Show mock players when no real players found (for development)
-  const displayPlayers = players.length > 0 ? players : [
-    { player_id: 'mock1', name: 'Living Room Speaker', available: true, type: 'sendspin', powered: true, volume_level: 50, muted: false },
-    { player_id: 'mock2', name: 'Kitchen Sendspin', available: true, type: 'sendspin', powered: true, volume_level: 50, muted: false },
-    { player_id: 'mock3', name: 'Bedroom SpinDroid', available: false, type: 'sendspin', powered: false, volume_level: 50, muted: false },
-  ];
-
   const noPlayersFound = players.length === 0 && !loading;
 
   return (
@@ -32,7 +25,7 @@ export function PlayerList() {
       <div>
         <h2 className="text-2xl font-bold mb-2">Select Players</h2>
         <p className="text-text-muted">
-          Choose which Sendspin players to synchronize.
+          Choose which players to calibrate for synchronized playback.
         </p>
       </div>
 
@@ -45,25 +38,27 @@ export function PlayerList() {
         <>
           {noPlayersFound && (
             <div className="p-4 bg-yellow-900/20 border border-yellow-700/50 rounded-lg text-yellow-300 text-sm">
-              <p className="font-medium mb-1">No Sendspin players found</p>
+              <p className="font-medium mb-1">No players found</p>
               <p className="text-yellow-300/70">
-                Make sure your Sendspin players are connected to Music Assistant.
-                Showing demo players for testing.
+                Make sure your players are connected to Music Assistant and powered on.
               </p>
             </div>
           )}
 
           <div className="space-y-3">
-            {displayPlayers.map((player) => {
+            {players.map((player) => {
               const isAvailable = player.available !== false && player.powered !== false;
               const isSelected = selectedPlayerIds.includes(player.player_id);
 
               return (
                 <button
                   key={player.player_id}
-                  onClick={() => togglePlayerSelection(player.player_id)}
+                  onClick={() => {
+                    console.log('[UI] Tapped player:', player.player_id, player.name);
+                    togglePlayerSelection(player.player_id);
+                  }}
                   disabled={!isAvailable}
-                  className={`w-full flex items-center gap-3 p-4 rounded-lg border transition-colors
+                  className={`w-full flex items-center gap-3 p-4 rounded-lg border transition-colors touch-manipulation
                     ${isSelected
                       ? 'bg-primary/20 border-primary'
                       : 'bg-surface border-gray-600 hover:border-gray-500'

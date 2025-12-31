@@ -22,19 +22,13 @@ export function CalibrationWizard() {
 
   const [audioLevel, setAudioLevel] = useState(0);
   const [calibrationProgress, setCalibrationProgress] = useState({ detected: 0, total: 20 });
+  const [playbackMethod, setPlaybackMethod] = useState<'music_assistant' | 'local' | null>(null);
   const [isPushing, setIsPushing] = useState(false);
   const [pushResults, setPushResults] = useState<PushResult[] | null>(null);
   const sessionRef = useRef<CalibrationSession | null>(null);
   const animationRef = useRef<number>(0);
 
-  // Mock players for development
-  const mockPlayers = players.length > 0 ? players : [
-    { player_id: 'player1', name: 'Living Room Speaker', available: true, type: 'sendspin', powered: true, volume_level: 50, muted: false },
-    { player_id: 'player2', name: 'Kitchen Sendspin', available: true, type: 'sendspin', powered: true, volume_level: 50, muted: false },
-    { player_id: 'player3', name: 'Bedroom SpinDroid', available: false, type: 'sendspin', powered: false, volume_level: 50, muted: false },
-  ];
-
-  const selectedPlayers = mockPlayers.filter((p) =>
+  const selectedPlayers = players.filter((p) =>
     selectedPlayerIds.includes(p.player_id)
   );
 
@@ -65,11 +59,12 @@ export function CalibrationWizard() {
   }, [phase]);
 
   const handleSelectSpeaker = async (playerId: string) => {
-    const player = mockPlayers.find((p) => p.player_id === playerId);
+    const player = players.find((p) => p.player_id === playerId);
     if (!player) return;
 
     setCurrentPlayer(playerId);
     clearDetections();
+    setPlaybackMethod(null);
     setPhase('listening');
 
     // Create and start calibration session
@@ -79,6 +74,12 @@ export function CalibrationWizard() {
     try {
       await session.start((event) => {
         switch (event.type) {
+          case 'playback_started': {
+            const data = event.data as { method: 'music_assistant' | 'local'; url: string };
+            setPlaybackMethod(data.method);
+            break;
+          }
+
           case 'click_detected':
             addClickDetection(event.data as Parameters<typeof addClickDetection>[0]);
             break;
@@ -87,11 +88,12 @@ export function CalibrationWizard() {
             setCalibrationProgress(event.data as { detected: number; total: number });
             break;
 
-          case 'completed':
+          case 'completed': {
             const result = event.data as CalibrationResult;
             setResult(playerId, result);
             setPhase('results');
             break;
+          }
 
           case 'error':
             setError(event.data as string);
@@ -236,6 +238,21 @@ export function CalibrationWizard() {
               Hold your phone steady near the speaker.
             </p>
           </div>
+
+          {/* Playback status indicator */}
+          {playbackMethod && (
+            <div className={`p-3 rounded-lg text-sm text-center ${
+              playbackMethod === 'music_assistant'
+                ? 'bg-green-900/20 border border-green-700/50 text-green-300'
+                : 'bg-yellow-900/20 border border-yellow-700/50 text-yellow-300'
+            }`}>
+              {playbackMethod === 'music_assistant' ? (
+                <>Playing click track through Music Assistant</>
+              ) : (
+                <>Playing through phone speaker (MA playback failed)</>
+              )}
+            </div>
+          )}
 
           {/* Waveform visualization */}
           <div className="h-32 bg-surface rounded-lg flex items-center justify-center overflow-hidden">

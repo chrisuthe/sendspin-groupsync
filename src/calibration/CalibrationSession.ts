@@ -4,12 +4,15 @@
  */
 
 import { AudioDetector, createAudioDetector } from './AudioDetector';
-import { ClickTrackGenerator, DEFAULT_CLICK_TRACK_CONFIG } from './ClickTrackGenerator';
+import { ClickTrackGenerator } from './ClickTrackGenerator';
 import { OffsetCalculator } from './OffsetCalculator';
 import type { ClickDetection, CalibrationResult, CalibrationConfig } from '../types';
+import { DEFAULT_CALIBRATION_CONFIG } from '../types';
+import { maClient } from '../ma-client';
 
 export type CalibrationEventType =
   | 'started'
+  | 'playback_started'
   | 'click_detected'
   | 'progress'
   | 'completed'
@@ -35,10 +38,14 @@ export class CalibrationSession {
   private eventCallback: CalibrationEventCallback | null = null;
   private isRunning = false;
 
+  // Audio playback
+  private audioContext: AudioContext | null = null;
+  private audioSource: AudioBufferSourceNode | null = null;
+
   constructor(playerId: string, playerName: string, config?: Partial<CalibrationConfig>) {
     this.playerId = playerId;
     this.playerName = playerName;
-    this.config = { ...DEFAULT_CLICK_TRACK_CONFIG, ...config } as CalibrationConfig;
+    this.config = { ...DEFAULT_CALIBRATION_CONFIG, ...config };
 
     this.clickTrackGenerator = new ClickTrackGenerator({
       sampleRate: this.config.sampleRate,
@@ -65,7 +72,7 @@ export class CalibrationSession {
     this.isRunning = true;
 
     try {
-      // Initialize audio detector
+      // Initialize audio detector (microphone)
       this.audioDetector = createAudioDetector({
         sampleRate: this.config.sampleRate,
         expectedFrequencies: this.config.frequencies,
@@ -73,11 +80,54 @@ export class CalibrationSession {
 
       await this.audioDetector.initialize();
 
+      // Create audio context for playback
+      this.audioContext = new AudioContext({ sampleRate: this.config.sampleRate });
+
       this.emit({ type: 'started' });
 
-      // Start listening for clicks
+      // Start listening for clicks via microphone
       this.audioDetector.startListening((detection) => {
         this.handleDetection(detection);
+      });
+
+      // Small delay to ensure mic is ready, then start playing click track
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // Play click track through Music Assistant
+      console.log('[CalibrationSession] Starting click track playback via Music Assistant...');
+
+      // Build the URL to the click track served by this app
+      // NOTE: This URL must be accessible from the Music Assistant server!
+      // If using a reverse proxy, make sure MA can reach the same URL.
+      const clickTrackUrl = `${window.location.origin}/calibration-clicks.wav`;
+      console.log('[CalibrationSession] Click track URL:', clickTrackUrl);
+
+      let playbackMethod: 'music_assistant' | 'local' = 'music_assistant';
+
+      try {
+        // Tell Music Assistant to play the click track on the selected player
+        // 'replace' clears the queue and plays immediately
+        await maClient.playMedia(this.playerId, clickTrackUrl, 'replace');
+        console.log('[CalibrationSession] Click track command sent to', this.playerName);
+        console.log('[CalibrationSession] NOTE: If MA cannot fetch the URL, playback may fail silently.');
+        console.log('[CalibrationSession] The URL must be accessible from the MA server, not just your browser.');
+      } catch (playError) {
+        console.error('[CalibrationSession] Failed to play via MA, falling back to local playback:', playError);
+        playbackMethod = 'local';
+
+        // Fallback to local playback (phone speaker)
+        const buffer = this.clickTrackGenerator.generateAudioBuffer(this.audioContext!);
+        this.audioSource = this.audioContext!.createBufferSource();
+        this.audioSource.buffer = buffer;
+        this.audioSource.connect(this.audioContext!.destination);
+        this.audioSource.start();
+
+        console.log('[CalibrationSession] Fallback: Click track playing through phone speaker');
+      }
+
+      this.emit({
+        type: 'playback_started',
+        data: { method: playbackMethod, url: clickTrackUrl },
       });
 
       // Auto-stop after calibration duration
@@ -222,6 +272,21 @@ export class CalibrationSession {
 
   private cleanup(): void {
     this.isRunning = false;
+
+    // Stop audio playback
+    try {
+      this.audioSource?.stop();
+    } catch {
+      // Already stopped
+    }
+    this.audioSource = null;
+
+    if (this.audioContext?.state !== 'closed') {
+      this.audioContext?.close();
+    }
+    this.audioContext = null;
+
+    // Stop microphone
     this.audioDetector?.dispose();
     this.audioDetector = null;
   }
