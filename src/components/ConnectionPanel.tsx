@@ -6,6 +6,8 @@ export function ConnectionPanel() {
   const {
     serverUrl,
     setServerUrl,
+    sendspinUrl,
+    setSendspinUrl,
     connecting,
     setConnecting,
     setConnected,
@@ -16,6 +18,8 @@ export function ConnectionPanel() {
   } = useConnectionStore();
   const { setPlayers, setLoading } = usePlayersStore();
   const [inputUrl, setInputUrl] = useState(serverUrl || '');
+  const [inputSendspinUrl, setInputSendspinUrl] = useState(sendspinUrl || '');
+  const [showAdvanced, setShowAdvanced] = useState(!!sendspinUrl);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -55,8 +59,9 @@ export function ConnectionPanel() {
       // Connect to Music Assistant
       await maClient.connect(inputUrl.trim());
 
-      // Save URL
+      // Save URLs
       setServerUrl(inputUrl.trim());
+      setSendspinUrl(inputSendspinUrl.trim());
       addRecentServer(inputUrl.trim());
 
       // Try to authenticate with stored token (proactively, some servers require it)
@@ -241,6 +246,48 @@ export function ConnectionPanel() {
                        placeholder-gray-500 disabled:opacity-50"
           />
         </div>
+
+        {/* Advanced settings toggle */}
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          className="flex items-center gap-2 text-sm text-text-muted hover:text-white transition-colors"
+        >
+          <svg
+            className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+          Advanced Settings
+        </button>
+
+        {/* Sendspin URL (advanced) */}
+        {showAdvanced && (
+          <div>
+            <label htmlFor="sendspin-url" className="block text-sm font-medium mb-2">
+              Sendspin Server URL <span className="text-text-muted">(optional)</span>
+            </label>
+            <input
+              id="sendspin-url"
+              type="text"
+              value={inputSendspinUrl}
+              onChange={(e) => setInputSendspinUrl(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="192.168.1.100:8095 (for clock sync)"
+              disabled={connecting}
+              className="w-full px-4 py-3 bg-surface border border-gray-600 rounded-lg
+                         focus:ring-2 focus:ring-primary focus:border-transparent
+                         placeholder-gray-500 disabled:opacity-50"
+            />
+            <p className="mt-1 text-xs text-text-muted">
+              Only needed if Sendspin runs on a different server than Music Assistant.
+              Used for precise clock synchronization during calibration.
+            </p>
+          </div>
+        )}
 
         {error && (
           <div className="p-3 bg-red-900/30 border border-red-700 rounded-lg text-red-300 text-sm">

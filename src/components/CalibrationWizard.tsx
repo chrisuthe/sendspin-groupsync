@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useCalibrationStore, usePlayersStore } from '../store';
+import { useCalibrationStore, usePlayersStore, useConnectionStore } from '../store';
 import { createCalibrationSession, CalibrationSession } from '../calibration';
 import { pushSyncOffsets } from '../sync-push';
 import type { PushResult } from '../sync-push';
@@ -19,10 +19,24 @@ export function CalibrationWizard() {
     setError,
   } = useCalibrationStore();
   const { players, selectedPlayerIds } = usePlayersStore();
+  const { serverUrl, sendspinUrl } = useConnectionStore();
 
   const [audioLevel, setAudioLevel] = useState(0);
   const [calibrationProgress, setCalibrationProgress] = useState({ detected: 0, total: 20 });
   const [playbackMethod, setPlaybackMethod] = useState<'music_assistant' | 'local' | null>(null);
+  const [clockSyncStatus, setClockSyncStatus] = useState<{
+    attempted: boolean;
+    syncing: boolean;
+    synced: boolean;
+    error?: string;
+    offsetMs?: number;
+    uncertaintyMs?: number;
+    measurements?: number;
+  }>({
+    attempted: false,
+    syncing: false,
+    synced: false,
+  });
   const [isPushing, setIsPushing] = useState(false);
   const [pushResults, setPushResults] = useState<PushResult[] | null>(null);
   const sessionRef = useRef<CalibrationSession | null>(null);
@@ -65,15 +79,42 @@ export function CalibrationWizard() {
     setCurrentPlayer(playerId);
     clearDetections();
     setPlaybackMethod(null);
+    setClockSyncStatus({ attempted: false, syncing: false, synced: false });
     setPhase('listening');
 
     // Create and start calibration session
-    const session = createCalibrationSession(playerId, player.name);
+    // Use sendspinUrl for clock sync if provided, otherwise use serverUrl
+    const clockSyncUrl = sendspinUrl || serverUrl;
+    const session = createCalibrationSession(playerId, player.name, clockSyncUrl);
     sessionRef.current = session;
 
     try {
       await session.start((event) => {
         switch (event.type) {
+          case 'clock_syncing':
+            setClockSyncStatus({ attempted: true, syncing: true, synced: false });
+            break;
+
+          case 'clock_synced': {
+            const data = event.data as {
+              success: boolean;
+              error?: string;
+              offsetMs: number | null;
+              uncertaintyMs: number | null;
+              measurements: number;
+            };
+            setClockSyncStatus({
+              attempted: true,
+              syncing: false,
+              synced: data.success,
+              error: data.error,
+              offsetMs: data.offsetMs ?? undefined,
+              uncertaintyMs: data.uncertaintyMs ?? undefined,
+              measurements: data.measurements,
+            });
+            break;
+          }
+
           case 'playback_started': {
             const data = event.data as { method: 'music_assistant' | 'local'; url: string };
             setPlaybackMethod(data.method);
@@ -233,11 +274,47 @@ export function CalibrationWizard() {
         <>
           <div className="text-center">
             <div className="text-6xl mb-4 animate-pulse">🎤</div>
-            <h2 className="text-2xl font-bold mb-2">Listening...</h2>
+            <h2 className="text-2xl font-bold mb-2">
+              {clockSyncStatus.syncing ? 'Syncing Clock...' : 'Listening...'}
+            </h2>
             <p className="text-text-muted">
-              Hold your phone steady near the speaker.
+              {clockSyncStatus.syncing
+                ? 'Synchronizing with server for accurate timing'
+                : 'Hold your phone steady near the speaker.'}
             </p>
           </div>
+
+          {/* Clock sync status */}
+          {clockSyncStatus.attempted && (
+            <div className={`p-3 rounded-lg text-sm text-center ${
+              clockSyncStatus.syncing
+                ? 'bg-blue-900/20 border border-blue-700/50 text-blue-300'
+                : clockSyncStatus.synced
+                ? 'bg-green-900/20 border border-green-700/50 text-green-300'
+                : 'bg-yellow-900/20 border border-yellow-700/50 text-yellow-300'
+            }`}>
+              {clockSyncStatus.syncing ? (
+                <span className="flex items-center justify-center gap-2">
+                  <div className="w-4 h-4 border-2 border-blue-300 border-t-transparent rounded-full animate-spin" />
+                  Synchronizing clock with server...
+                </span>
+              ) : clockSyncStatus.synced ? (
+                <div className="space-y-1">
+                  <div>Clock synced: {clockSyncStatus.offsetMs?.toFixed(1)}ms offset</div>
+                  <div className="text-xs opacity-75">
+                    {clockSyncStatus.measurements} measurements, ±{clockSyncStatus.uncertaintyMs?.toFixed(2)}ms uncertainty
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <div>Using fallback timing (clock sync failed)</div>
+                  {clockSyncStatus.error && (
+                    <div className="text-xs opacity-75">{clockSyncStatus.error}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Playback status indicator */}
           {playbackMethod && (

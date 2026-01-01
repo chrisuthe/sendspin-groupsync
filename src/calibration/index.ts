@@ -9,3 +9,9 @@ export type { OffsetResult } from './OffsetCalculator';
 
 export { CalibrationSession, createCalibrationSession } from './CalibrationSession';
 export type { CalibrationEvent, CalibrationEventType } from './CalibrationSession';
+
+export { ClockSynchronizer, clockSynchronizer } from './ClockSynchronizer';
+export type { ClockSyncStatus, TimeSyncMeasurement } from './ClockSynchronizer';
+
+export { SendspinSyncClient, createSendspinSyncClient } from './SendspinSyncClient';
+export type { SendspinSyncState } from './SendspinSyncClient';
